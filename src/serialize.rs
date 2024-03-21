@@ -148,7 +148,7 @@ pub fn block_order(block: &Block, mc_seq_no: u32) -> Result<String> {
     let info = block.read_info()?;
     let master_order = u64_to_string(mc_seq_no as u64);
     if !info.shard().is_masterchain() {
-        let mut workchain_order = u64_to_string(info.shard().workchain_id().abs() as u64);
+        let mut workchain_order = u64_to_string(info.shard().workchain_id().unsigned_abs() as u64);
         if info.shard().workchain_id() < 0 {
             workchain_order = format!("-{}", workchain_order);
         }
@@ -256,8 +256,7 @@ pub fn shard_to_string(value: u64) -> String {
 }
 
 fn construct_address(workchain_id: i32, account_id: AccountId) -> Result<MsgAddressInt> {
-    if workchain_id <= 127
-        && workchain_id >= -128
+    if (-128..=127).contains(&workchain_id)
         && account_id.remaining_bits() == STD_ACCOUNT_ID_LENGTH
     {
         MsgAddressInt::with_standart(None, workchain_id as i8, account_id)
@@ -273,8 +272,10 @@ fn serialize_cell(
     write_hash: bool,
 ) -> Result<()> {
     if let Some(cell) = cell {
-        let bytes = serialize_toc(cell)?;
-        serialize_field(map, id_str, base64::encode(&bytes));
+        if !cell.is_pruned() {
+            let bytes = serialize_toc(cell)?;
+            serialize_field(map, id_str, base64::encode(bytes));
+        }
         if write_hash {
             let string = id_str.to_owned() + "_hash";
             serialize_uint256(map, &string, &cell.repr_hash())
@@ -292,7 +293,7 @@ fn serialize_slice(
     if let Some(slice) = slice {
         let cell = slice.clone().into_cell();
         let bytes = serialize_toc(&cell)?;
-        serialize_field(map, id_str, base64::encode(&bytes));
+        serialize_field(map, id_str, base64::encode(bytes));
         if write_hash {
             let string = id_str.to_owned() + "_hash";
             serialize_uint256(map, &string, &cell.repr_hash())
@@ -1490,7 +1491,7 @@ fn serialize_shard_accounts(
 
         let account_set = AccountSerializationSet {
             account,
-            prev_account_state: None,
+            prev_code_hash: None,
             boc: serialize_toc(&value.account_cell())?,
             boc1,
             proof: None,
@@ -1523,7 +1524,7 @@ fn serialize_libraries(
         libraries_vec.push(serde_json::json!({
             "hash": key.as_hex_string(),
             "publishers": publishers,
-            "lib": base64::encode(&serialize_toc(value.lib())?)
+            "lib": base64::encode(serialize_toc(value.lib())?)
         }));
         Ok(true)
     })?;
@@ -1816,7 +1817,7 @@ pub fn db_serialize_block_ex<'a>(
             },
         );
     }
-    map.insert("boc".to_string(), base64::encode(&set.boc).into());
+    map.insert("boc".to_string(), base64::encode(set.boc).into());
     map.insert("global_id".to_string(), set.block.global_id.into());
     let block_info = set.block.read_info()?;
     map.insert("version".to_string(), block_info.version().into());
@@ -2116,9 +2117,9 @@ pub fn db_serialize_transaction_ex<'a>(
     serialize_id(&mut map, id_str, Some(set.id));
     serialize_id(&mut map, "block_id", set.block_id);
     if let Some(proof) = &set.proof {
-        serialize_field(&mut map, "proof", base64::encode(&proof));
+        serialize_field(&mut map, "proof", base64::encode(proof));
     }
-    serialize_field(&mut map, "boc", base64::encode(&set.boc));
+    serialize_field(&mut map, "boc", base64::encode(set.boc));
     serialize_field(&mut map, "status", set.status as u8);
     if mode.is_q_server() {
         serialize_field(
@@ -2333,7 +2334,7 @@ fn serialize_account_status(
 #[derive(Default)]
 pub struct AccountSerializationSet {
     pub account: Account,
-    pub prev_account_state: Option<Account>,
+    pub prev_code_hash: Option<UInt256>,
     pub boc: Vec<u8>,
     pub boc1: Option<Vec<u8>>,
     pub proof: Option<Vec<u8>>,
@@ -2342,7 +2343,7 @@ pub struct AccountSerializationSet {
 pub fn debug_account(account: Account) -> Result<String> {
     let set = AccountSerializationSet {
         account,
-        prev_account_state: None,
+        prev_code_hash: None,
         boc: Vec::new(),
         boc1: None,
         proof: None,
@@ -2422,24 +2423,18 @@ pub fn db_serialize_account_ex(
         }
     };
     if let Some(proof) = &set.proof {
-        serialize_field(&mut map, "proof", base64::encode(&proof));
+        serialize_field(&mut map, "proof", base64::encode(proof));
     }
     serialize_account_status(&mut map, "acc_type", &set.account.status(), mode);
-    if let Some(prev_state) = &set.prev_account_state {
-        serialize_id(
-            &mut map,
-            "prev_code_hash",
-            prev_state.get_code().map(|cell| cell.repr_hash()).as_ref(),
-        );
-    }
+    serialize_id(&mut map, "prev_code_hash", (&set.prev_code_hash).as_ref());
     Ok(map)
 }
 
 #[derive(Default)]
 pub struct DeletedAccountSerializationSet {
     pub account_id: AccountId,
-    pub prev_account_state: Option<Account>,
-    pub workchain_id: i32,
+    pub prev_code_hash: Option<UInt256>,
+    pub workchain_id: i32
 }
 
 pub fn db_serialize_deleted_account(
@@ -2460,13 +2455,7 @@ pub fn db_serialize_deleted_account_ex(
     serialize_field(&mut map, id_str, address.to_string());
     serialize_field(&mut map, "workchain_id", set.workchain_id);
     serialize_account_status(&mut map, "acc_type", &AccountStatus::AccStateNonexist, mode);
-    if let Some(prev_state) = &set.prev_account_state {
-        serialize_id(
-            &mut map,
-            "prev_code_hash",
-            prev_state.get_code().map(|cell| cell.repr_hash()).as_ref(),
-        );
-    }
+    serialize_id(&mut map, "prev_code_hash", (&set.prev_code_hash).as_ref());
 
     Ok(map)
 }
@@ -2518,7 +2507,7 @@ pub fn db_serialize_message_ex(
     //serialize_id(&mut map, "block_id", set.block_id.as_ref());
     serialize_id(&mut map, "transaction_id", set.transaction_id.as_ref());
     if let Some(proof) = &set.proof {
-        serialize_field(&mut map, "proof", base64::encode(&proof));
+        serialize_field(&mut map, "proof", base64::encode(proof));
     }
     serialize_field(&mut map, "boc", base64::encode(&set.boc));
     serialize_field(&mut map, "status", set.status as u8);
