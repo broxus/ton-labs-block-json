@@ -17,3 +17,4 @@ ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 
 [features]
 venom = ["ton_block/venom"]
+ton = ["ton_block/ton"]

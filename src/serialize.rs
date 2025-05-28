@@ -2379,12 +2379,7 @@ pub fn db_serialize_account_ex(
         serialize_field(&mut map, "last_paid", storage_stat.last_paid());
         serialize_u64(&mut map, "bits", &storage_stat.used().bits(), mode);
         serialize_u64(&mut map, "cells", &storage_stat.used().cells(), mode);
-        serialize_u64(
-            &mut map,
-            "public_cells",
-            &storage_stat.used().public_cells(),
-            mode,
-        );
+        serialize_u64(&mut map, "public_cells", &0, mode);
         if let Some(grams) = storage_stat.due_payment() {
             serialize_grams(&mut map, "due_payment", grams, mode);
         }
