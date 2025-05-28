@@ -12,8 +12,9 @@ num-traits = "0.2"
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = { version = "1.0.79", features = ["preserve_order"] }
 
-ton_block = { git = "https://github.com/broxus/ton-labs-block" }
+ton_block = { git = "https://github.com/broxus/ton-labs-block", branch = "feature/storage-extra" }
 ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 
 [features]
 venom = ["ton_block/venom"]
+ton = ["ton_block/ton"]
